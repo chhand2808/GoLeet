@@ -65,13 +65,21 @@ goleet prev 3
 📚 Commands Overview
 Command	Description
 goleet init	Setup config + embed problems.json
+
 goleet suggest	Suggest a new LeetCode problem
+
 goleet suggest --difficulty Easy	Filter by difficulty
+
 goleet suggest --topic array	Filter by topic
+
 goleet done <id>	Mark a problem solved
+
 goleet stats	Total solved, difficulty stats, streaks
+
 goleet prev [n]	View previous suggestions (max 10)
+
 goleet update	(Coming soon) Auto-update the CLI
+
 📊 Example Output
 Stats Screen
 ╔══ 📊 STATS ═════════════════════════╗
@@ -127,10 +135,6 @@ goleet/
 Contributions are welcome!
 Feel free to open issues or submit PRs.
 
-📄 License
-
-MIT License © 2025
-Your Name (Chhand Kunal Chaughule)
 
 ⭐ Support
 
