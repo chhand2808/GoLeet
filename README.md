@@ -80,20 +80,6 @@ goleet prev [n]	View previous suggestions (max 10)
 
 goleet update	(Coming soon) Auto-update the CLI
 
-📊 Example Output
-Stats Screen
-╔══ 📊 STATS ═════════════════════════╗
-║ Total Solved        : 27            ║
-║ Easy / Med / Hard   : 15 / 10 / 2   ║
-║ 🔥 Current Streak    : 5             ║
-║ 🏆 Longest Streak     : 7             ║
-╚════════════════════════════════════╝
-
-Suggestion Example
-🧠 Today's Suggested Problem:
-1. Two Sum (Easy)
-Topics: [Array Hash Table]
-Link: https://leetcode.com/problems/two-sum/
 
 🛠️ Tech Stack
 
