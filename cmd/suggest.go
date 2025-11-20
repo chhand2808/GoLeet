@@ -2,108 +2,183 @@ package cmd
 
 import (
 	"fmt"
-	"math/rand"
 	"strings"
-	"time"
 
 	"github.com/chhand2808/goleet/internal/data"
+	"github.com/chhand2808/goleet/internal/gemini"
+	utils "github.com/chhand2808/goleet/internal/util"
 	"github.com/spf13/cobra"
-)
-
-var (
-	flagDifficulty string
-	flagTopic      string
 )
 
 var suggestCmd = &cobra.Command{
 	Use:   "suggest",
-	Short: "Suggests a new LeetCode problem",
+	Short: "Suggests a new LeetCode problem using Gemini AI",
 	Run: func(cmd *cobra.Command, args []string) {
-		runSuggest()
+		runAISuggest(cmd)
 	},
 }
 
 func init() {
 	rootCmd.AddCommand(suggestCmd)
 
-	// optional filters
-	suggestCmd.Flags().StringVar(&flagDifficulty, "difficulty", "", "Filter by difficulty: Easy|Medium|Hard")
-	suggestCmd.Flags().StringVar(&flagTopic, "topic", "", "Filter by topic (case-insensitive)")
+	// add debug flag
+	suggestCmd.Flags().Bool("debug", false, "Enable debug logging")
 }
 
-func runSuggest() {
+func runAISuggest(cmd *cobra.Command) {
+	debugFlag, _ := cmd.Flags().GetBool("debug")
+	if debugFlag {
+		utils.DebugEnabled = true
+		utils.IsProduction = false
+	} else {
+		utils.IsProduction = true
+	}
+
+	utils.Info("Starting AI suggestion flow...")
+
 	store := data.NewStore()
 
+	// Load problems
 	problems, err := store.LoadProblems()
 	if err != nil {
-		fmt.Println("❌ Failed to load problems:", err)
+		utils.Error("Failed to load problems: %v", err)
 		return
 	}
-	if len(problems) == 0 {
-		fmt.Println("No problems found in problems.json")
-		return
-	}
+	utils.Debug("Loaded %d problems", len(problems))
 
-	// Apply simple filtering if flags provided
-	candidates := []data.Problem{}
-	for _, p := range problems {
-		// difficulty filter
-		if flagDifficulty != "" {
-			if !strings.EqualFold(p.Difficulty, flagDifficulty) {
-				continue
-			}
+	// Load history + solved
+	history, _ := store.LoadHistory()
+	solved, _ := store.LoadSolved()
+	utils.Debug("Loaded %d solved, %d history", len(solved), len(history))
+
+	// seriousness = how strict the AI should be
+	seriousness := 1
+	var final []data.AISuggestion
+
+	for attempt := 1; attempt <= 3; attempt++ {
+		utils.Info("Gemini Call Attempt %d (seriousness=%d)", attempt, seriousness)
+
+		prompt := gemini.BuildPrompt(solved, history, problems, seriousness)
+		utils.Debug("PROMPT SENT TO GEMINI:\n%s", prompt)
+
+		// Start spinner ONLY in production mode
+		var stop chan bool
+		if utils.IsProduction && !utils.DebugEnabled {
+			stop = utils.StartSpinner()
 		}
 
-		// topic filter
-		if flagTopic != "" {
-			foundTopic := false
-			for _, t := range p.TopicTags {
-				if strings.EqualFold(t.Name, flagTopic) {
-					foundTopic = true
-					break
-				}
-			}
-			if !foundTopic {
-				continue
-			}
+		ai, err := gemini.GetSuggestions(prompt)
+
+		// Stop spinner
+		if utils.IsProduction && !utils.DebugEnabled {
+			utils.StopSpinner(stop)
+			fmt.Println() // move to next line
 		}
 
-		candidates = append(candidates, p)
+		if err != nil {
+			utils.Warn("Gemini error: %v", err)
+			seriousness++
+			continue
+		}
+
+		utils.Debug("Gemini returned %d suggestions", len(ai))
+
+		// filter invalid ones
+		valid := filterAISuggestions(ai, solved, history, problems)
+		utils.Debug("%d suggestions valid after filtering", len(valid))
+
+		if len(valid) > 0 {
+			final = valid
+			utils.Info("Found valid AI suggestions.")
+			break
+		}
+
+		utils.Warn("No valid suggestions, retrying with higher seriousness...")
+		seriousness++
 	}
 
-	if len(candidates) == 0 {
-		fmt.Println("No candidate problems found for the given filters.")
+	if len(final) == 0 {
+		utils.Error("No AI suggestions available after retries")
+		fmt.Println("⚠️ No AI suggestions available.")
 		return
 	}
 
-	// pick random candidate
-	rand.Seed(time.Now().UnixNano())
-	choice := candidates[rand.Intn(len(candidates))]
+	// pick the first suggestion
+	chosen := final[0]
 
-	// display to user
-	topics := []string{}
-	for _, t := range choice.TopicTags {
-		topics = append(topics, t.Name)
-	}
+	utils.Info("Chosen suggestion: %d - %s", chosen.Number, chosen.Title)
 
-	fmt.Println("🧠 Today's Suggested Problem:")
-	fmt.Printf("%s. %s (%s)\n", choice.ID, choice.Title, choice.Difficulty) // uses helper ID() below
-	fmt.Println("Topics:", topics)
-	fmt.Printf("Link: https://leetcode.com/problems/%s/\n", choice.TitleSlug)
+	fmt.Println("🧠 AI Suggested:")
+	fmt.Printf("%d. %s\n", chosen.Number, chosen.Title)
+	fmt.Println("Topics:", chosen.Topics)
+	fmt.Printf(
+		"Link: https://leetcode.com/problems/%s/\n",
+		strings.ToLower(strings.ReplaceAll(chosen.Title, " ", "-")),
+	)
 
-	// append to history (max 10)
-	entry := data.NewHistoryEntry(choice.ID, choice.Title, "")
-	if err := store.AppendHistory(entry, 10); err != nil {
-		fmt.Println("⚠️ Warning: failed to update history:", err)
+	// Save history
+	err = store.AppendHistory(
+		data.NewHistoryEntry(
+			fmt.Sprint(chosen.Number),
+			chosen.Title,
+			"",
+		),
+		10,
+	)
+
+	if err != nil {
+		utils.Warn("Failed to update history: %v", err)
+	} else {
+		utils.Info("History updated successfully.")
 	}
 }
 
-// Because data.Problem used in data package might have different field names,
-// provide small helper methods via type aliasing with reflection-safe access.
-// Here, we assume data.Problem has methods/fields; implement helper accessors:
+func filterAISuggestions(
+	ai []data.AISuggestion,
+	solved []data.SolvedProblem,
+	history []data.HistoryEntry,
+	problems []data.Problem,
+) []data.AISuggestion {
 
-// NOTE: adjust these if your data.Problem struct uses different exported field names.
-// The following assumes the struct fields are exported as: ID, Title, Difficulty, TitleSlug, TopicTags
+	block := map[string]bool{}
 
-// To keep this file minimal and robust, use small wrapper functions in data package instead.
-// For now, implement simple accessors by casting.
+	// block solved
+	for _, s := range solved {
+		block[s.ID] = true
+	}
+
+	// block recent history
+	for _, h := range history {
+		block[h.ID] = true
+	}
+
+	out := []data.AISuggestion{}
+
+	for _, p := range ai {
+		id := fmt.Sprint(p.Number)
+
+		// skip if solved/history
+		if block[id] {
+			continue
+		}
+
+		// ensure exists in problem db
+		if !existsInProblemDB(id, problems) {
+			utils.Debug("AI suggested problem %s not found in DB", id)
+			continue
+		}
+
+		out = append(out, p)
+	}
+
+	return out
+}
+
+func existsInProblemDB(id string, problems []data.Problem) bool {
+	for _, p := range problems {
+		if p.ID == id {
+			return true
+		}
+	}
+	return false
+}
