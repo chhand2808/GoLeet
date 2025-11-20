@@ -1,0 +1,18 @@
+# Binaries
+*.exe
+*.out
+*.dll
+
+# Local data files (runtime)
+data/config.json
+data/history.json
+data/solved.json
+data/problems.json
+
+# IDE files
+.vscode/
+.idea/
+.DS_Store
+
+# Builds
+/dist/
